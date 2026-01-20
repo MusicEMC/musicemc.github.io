@@ -1,3 +1,4 @@
+[conception-wheel-v7.html](https://github.com/user-attachments/files/24731965/conception-wheel-v7.html)
 <!doctype html>
 <html lang="en">
 <head>
@@ -65,7 +66,7 @@
       font-size: 13px;
       color: var(--muted2);
       line-height: 1.35;
-      max-width: 78ch;
+      max-width: 86ch;
     }
 
     .stats{
@@ -331,8 +332,7 @@
       margin-top: 2px;
     }
 
-    /* Markers now live INSIDE the wheelFace so they rotate with the wheel.
-       This guarantees alignment even as the wheel continues spinning after reveal. */
+    /* Markers live INSIDE the wheelFace so they rotate with the wheel. */
     .markers{
       position:absolute;
       inset: 0;
@@ -565,6 +565,17 @@
     .swatch.good{ background: rgba(62, 255, 171, 0.9); }
     .swatch.bad{ background: rgba(255, 87, 87, 0.9); }
 
+    .scoreLegend{
+      display:flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 6px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.70);
+      line-height: 1.35;
+    }
+
     .logPanel{
       margin-top: 14px;
     }
@@ -637,7 +648,7 @@
       font-size: 12px;
       color: rgba(255,255,255,0.55);
       line-height: 1.35;
-      max-width: 96ch;
+      max-width: 100ch;
     }
 
     @media (max-width: 980px){
@@ -666,20 +677,22 @@
         <div>
           <h1>Conception Wheel</h1>
           <div class="subtitle">
-            A “game” is <b>10 rounds</b>. Each round has a hidden monthly fertility (0–25%). Spin month-by-month outcomes, then lock a guess:
-            <b>within ±5 percentage points</b> keeps your remaining points. Total score is the sum over the 10 rounds.
+            A “game” is <b>10 rounds</b>. Each round has hidden monthly fertility (0–25%). You can “test” (lock a guess) anytime.
+            <b>Grace period:</b> points don’t drop for the first <b id="graceInline">—</b> months (based on the age preset), then drop by 1/month.
+            <b>Accuracy:</b> your score is a simple multiplier based on how close your guess is.
           </div>
         </div>
         <div class="stats">
           <div class="pill"><span class="muted">Round</span> <b id="roundNum">1</b><span class="muted">/10</span></div>
           <div class="pill"><span class="muted">Month</span> <b><span id="monthNum">0</span></b><span class="muted">/24</span></div>
+          <div class="pill"><span class="muted">Grace</span> <b id="graceNum">—</b><span class="muted">mo</span></div>
           <div class="pill"><span class="muted" id="pointsLabel">Points left</span> <b id="pointsNum">24</b></div>
           <div class="pill"><span class="muted">Total score</span> <b id="scoreNum">0</b></div>
           <div class="pill" id="fertilityPill" style="display:none;"><span class="muted">True fertility</span> <b id="trueFertilityNum">—</b></div>
         </div>
       </div>
       <div id="message" class="message neutral">
-        ✅ Ready (Round 1/10). Spin Month 1, or lock in a guess immediately (high risk, high reward).
+        ✅ Ready (Round 1/10). Spin Month 1, or lock a guess immediately.
         <small>(If nothing responds to clicks, your viewer is probably blocking JavaScript. Open the file in a real browser.)</small>
       </div>
     </header>
@@ -747,7 +760,15 @@
             </div>
 
             <div class="guessHint" id="ageHint">
-              Age preset changes the <b>distribution</b> used when starting a round. If you change it mid-round, it applies to the <b>next</b> round.
+              Age preset affects the distribution used when starting a round. If you change it mid-round, it applies to the <b>next</b> round.
+            </div>
+
+            <div class="scoreLegend" aria-label="Accuracy scoring legend">
+              <span class="chip">≤2 → 100%</span>
+              <span class="chip">3–5 → 70%</span>
+              <span class="chip">6–8 → 40%</span>
+              <span class="chip">9–12 → 20%</span>
+              <span class="chip">13+ → 0%</span>
             </div>
           </div>
         </section>
@@ -779,7 +800,7 @@
           <tr>
             <th style="width:84px;">Month</th>
             <th>Outcome</th>
-            <th style="width:140px;">Points</th>
+            <th style="width:170px;">Points</th>
           </tr>
         </thead>
         <tbody id="logBody">
@@ -792,8 +813,8 @@
 
     <footer>
       <div class="footNote">
-        <b>Note:</b> This is a simplified simulation, not medical advice. Real-world time‑to‑pregnancy varies widely with age, timing, and many other factors.
-        After 10 rounds, click <b>Start new game</b> to reset the 10-round table + total score.
+        <b>Note:</b> This is a simplified simulation, not medical advice.
+        Scoring is designed to avoid “lock early for max points”: points are protected for the grace window, then decay.
       </div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button id="nextRoundBtn" class="btnPrimary" type="button" disabled title="Finish the round first.">Next round</button>
@@ -812,7 +833,27 @@
     const MIN_FERT = 0;        // 0%
     const MAX_FERT = 25;       // 25% (monthly max)
     const GUESS_MAX = 25;      // guess range 0–25%
-    const TOLERANCE_PTS = 5;   // ±5 percentage points
+
+    // Scoring table (absolute error in percentage points)
+    const ACCURACY_BANDS = [
+      { maxDiff: 2,  mult: 1.00, label: "≤2 → 100%" },
+      { maxDiff: 5,  mult: 0.70, label: "3–5 → 70%" },
+      { maxDiff: 8,  mult: 0.40, label: "6–8 → 40%" },
+      { maxDiff: 12, mult: 0.20, label: "9–12 → 20%" },
+      { maxDiff: Infinity, mult: 0.00, label: "13+ → 0%" },
+    ];
+
+    // Grace months by preset (points do not drop for first T months, then drop 1/month)
+    const GRACE_BY_PRESET = {
+      "20_29": 12,
+      "30_34": 12,
+      "35_37": 6,
+      "38_40": 6,
+      "41_42": 3,
+      "43_44": 1,
+      "45_plus": 0,
+      "original": 12,
+    };
 
     const $ = (sel) => document.querySelector(sel);
 
@@ -822,6 +863,8 @@
       pointsNum: $("#pointsNum"),
       pointsLabel: $("#pointsLabel"),
       scoreNum: $("#scoreNum"),
+      graceNum: $("#graceNum"),
+      graceInline: $("#graceInline"),
       fertilityPill: $("#fertilityPill"),
       trueFertilityNum: $("#trueFertilityNum"),
       message: $("#message"),
@@ -926,29 +969,34 @@
       "original":{label:"Original", a: 4.0,  b: 3.6,  note: "v3/v4 distribution" },
     };
 
-    function currentAgePreset(){
-      const key = els.ageSelect.value;
+    function presetForKey(key){
       return AGE_PRESETS[key] || AGE_PRESETS["30_34"];
     }
 
-    function formatPresetHint(){
-      const p = currentAgePreset();
-      const meanPct = (MAX_FERT * (p.a / (p.a + p.b)));
-      return `Age preset changes the <b>distribution</b> used when starting a round. ` +
-             `This preset’s average fertility is about <b>${meanPct.toFixed(1)}%</b> (out of a 25% max).`;
+    function graceMonthsForKey(key){
+      return (key in GRACE_BY_PRESET) ? GRACE_BY_PRESET[key] : 12;
     }
 
-    function sampleTrueFertilityPct(){
-      const p = currentAgePreset();
-      const x = randBeta(p.a, p.b);
+    function sampleTrueFertilityPct(preset){
+      const x = randBeta(preset.a, preset.b);
       const pct = Math.round(x * MAX_FERT);
       return Math.max(MIN_FERT, Math.min(MAX_FERT, pct));
+    }
+
+    function accuracyMultiplier(diff){
+      for (const b of ACCURACY_BANDS){
+        if (diff <= b.maxDiff) return b.mult;
+      }
+      return 0.0;
     }
 
     /** ----- State ----- **/
     const state = {
       round: 1,
       totalScore: 0,
+
+      roundPresetKey: "30_34",
+      graceMonths: 12,
 
       trueFertilityPct: 10,
       wedgeOutcomes: new Array(WEDGES).fill(false),
@@ -969,18 +1017,32 @@
       spinning: false,
       autoSpinning: false,
 
-      lockedPoints: null,   // points at the moment of locking the guess
-      roundScore: null,     // points earned this round (lockedPoints or 0)
+      lockedPoints: null,
+      roundScore: null,
+      guessDiff: null,
+      guessMult: null,
 
       roundSummaries: new Array(MAX_GAME_ROUNDS).fill(null),
       gameOver: false,
 
-      sessionId: 0,         // increments when starting a new round/game to cancel async loops
+      sessionId: 0,
     };
 
     function bumpSession(){
       state.sessionId += 1;
       return state.sessionId;
+    }
+
+    function computePointsLeft(monthElapsed){
+      // PointsLeft = 24 − max(0, m − T)
+      const m = Math.max(0, Math.min(MAX_MONTHS, monthElapsed));
+      const T = Math.max(0, Math.min(MAX_MONTHS, state.graceMonths));
+      return Math.max(0, MAX_MONTHS - Math.max(0, m - T));
+    }
+
+    function updateGraceUI(){
+      els.graceNum.textContent = String(state.graceMonths);
+      els.graceInline.textContent = String(state.graceMonths);
     }
 
     /** ----- Rounds table ----- **/
@@ -1232,21 +1294,16 @@
 
     /** ----- Round finalization ----- **/
     function monthsFinalForSummary(){
-      // After our auto-spin fix, by the time we finalize a round we are either:
-      //  - conceived, with conceivedMonth set, OR
-      //  - hit 24 months without pregnancy
       if (state.conceived && Number.isFinite(state.conceivedMonth)) return state.conceivedMonth;
       return Math.min(MAX_MONTHS, Math.max(0, state.month));
     }
 
     function finalizeRoundUI(){
-      // Called when the round’s "months until outcome" is determined.
       const monthsFinal = monthsFinalForSummary();
       const roundScore = (state.roundScore ?? 0);
 
       recordCurrentRoundSummary({ monthsFinal, roundScore });
 
-      // Enable next round / game over
       if (state.round < MAX_GAME_ROUNDS){
         els.nextRoundBtn.disabled = false;
         els.nextRoundBtn.title = "Start the next round.";
@@ -1260,9 +1317,10 @@
         ? `Pregnancy achieved by <b>Month ${state.conceivedMonth}</b>.`
         : `No pregnancy by <b>Month ${monthsFinal}</b>.`;
 
-      const scoreText = (Math.abs(state.guessPct - state.trueFertilityPct) <= TOLERANCE_PTS)
-        ? `You kept <b>${roundScore}</b> points.`
-        : `Round score <b>0</b>.`;
+      const multPct = Math.round((state.guessMult ?? 0) * 100);
+      const scoreText =
+        `Accuracy error <b>${state.guessDiff ?? "—"}</b> → multiplier <b>${multPct}%</b>. ` +
+        `Locked points <b>${state.lockedPoints ?? "—"}</b> → round score <b>${roundScore}</b>.`;
 
       const tail = state.gameOver
         ? `<small>✅ Game complete (10/10). Click <b>Start new game</b> to play again.</small>`
@@ -1280,28 +1338,23 @@
     }
 
     async function autoSpinToOutcome(sessionAtStart){
-      // Auto-spin until pregnancy OR until MAX_MONTHS, while the wheel remains revealed.
       state.autoSpinning = true;
 
-      // Keep next-round disabled until we're done.
       els.nextRoundBtn.disabled = true;
       els.nextRoundBtn.title = "Auto-spinning to outcome…";
 
-      // If fertility is 0%, we will never conceive. Still spin to month 24 so months-to-outcome is correct.
       while (state.sessionId === sessionAtStart && !state.conceived && state.month < MAX_MONTHS){
         await spinOnce({ auto: true, sessionAtStart });
-        // small pause so the user can see the wheel settle
         await sleep(140);
       }
 
-      if (state.sessionId !== sessionAtStart) return; // cancelled by new game/round
+      if (state.sessionId !== sessionAtStart) return;
 
       state.autoSpinning = false;
-
       finalizeRoundUI();
     }
 
-    /** ----- Lock & reveal ----- **/
+    /** ----- Lock & reveal (scoring happens here) ----- **/
     function lockGuessAndReveal(){
       if (state.guessLocked) return;
       if (state.gameOver) return;
@@ -1310,7 +1363,7 @@
       state.guessLocked = true;
       state.revealed = true;
 
-      // Freeze points at the moment of locking (score uses this).
+      // Freeze points at the moment of locking (so score depends on the "testing decision", not when pregnancy happens).
       state.lockedPoints = state.pointsLeft;
       els.pointsLabel.textContent = "Points locked";
 
@@ -1320,9 +1373,10 @@
       els.guessSlider.disabled = true;
       els.guessDialShell.style.opacity = "0.70";
 
-      const diff = Math.abs(state.guessPct - state.trueFertilityPct);
-      const correct = diff <= TOLERANCE_PTS;
-      state.roundScore = correct ? state.lockedPoints : 0;
+      // Graded accuracy
+      state.guessDiff = Math.abs(state.guessPct - state.trueFertilityPct);
+      state.guessMult = accuracyMultiplier(state.guessDiff);
+      state.roundScore = Math.round(state.lockedPoints * state.guessMult);
 
       state.totalScore += state.roundScore;
       els.scoreNum.textContent = String(state.totalScore);
@@ -1330,24 +1384,21 @@
       setFertilityRevealVisible(true);
       els.trueFertilityNum.textContent = `${state.trueFertilityPct}%`;
 
-      // Reveal immediately, then possibly continue spinning automatically.
       renderWheelRevealed();
       revealMonthRow();
 
-      // If already conceived (or already at 24), we can finalize immediately.
-      // Otherwise, auto-spin until we reach the outcome.
-      const scoreLine = correct
-        ? `Locked <b>${state.guessPct}%</b> (true: <b>${state.trueFertilityPct}%</b>, diff: ${diff}). You keep <b>${state.roundScore}</b> points.`
-        : `Locked <b>${state.guessPct}%</b> (true: <b>${state.trueFertilityPct}%</b>, diff: ${diff}). Outside ±${TOLERANCE_PTS} ⇒ <b>score 0</b>.`;
+      const multPct = Math.round(state.guessMult * 100);
+      const scoreLine =
+        `Locked <b>${state.guessPct}%</b> (true: <b>${state.trueFertilityPct}%</b>, error: <b>${state.guessDiff}</b>). ` +
+        `Multiplier <b>${multPct}%</b> × locked points <b>${state.lockedPoints}</b> ⇒ round score <b>${state.roundScore}</b>.`;
 
       if (state.conceived || state.month >= MAX_MONTHS){
-        setMessage(scoreLine, correct ? "good" : "bad");
+        setMessage(scoreLine, (state.roundScore > 0 ? "good" : "bad"));
         finalizeRoundUI();
       } else {
-        // Start auto-spinning to pregnancy (or 24 months).
         setMessage(
           scoreLine + `<small>Auto-spinning to find the month of pregnancy (or Month 24 if it never happens)…</small>`,
-          correct ? "good" : "bad"
+          (state.roundScore > 0 ? "good" : "bad")
         );
         const sessionAtStart = state.sessionId;
         autoSpinToOutcome(sessionAtStart);
@@ -1370,8 +1421,6 @@
       bumpSession();
 
       state.month = 0;
-      state.pointsLeft = MAX_MONTHS;
-      state.rotationDeg = 0;
       state.spins = [];
       state.guessLocked = false;
       state.revealed = false;
@@ -1381,12 +1430,23 @@
       state.autoSpinning = false;
       state.lockedPoints = null;
       state.roundScore = null;
+      state.guessDiff = null;
+      state.guessMult = null;
 
-      // Points label
+      // Freeze round preset + grace at the start of the round.
+      state.roundPresetKey = els.ageSelect.value;
+      state.graceMonths = graceMonthsForKey(state.roundPresetKey);
+      updateGraceUI();
+
+      // Points reset
       els.pointsLabel.textContent = "Points left";
+      state.pointsLeft = computePointsLeft(0);
 
-      state.trueFertilityPct = sampleTrueFertilityPct();
+      // Sample fertility for this round from the chosen preset.
+      const preset = presetForKey(state.roundPresetKey);
+      state.trueFertilityPct = sampleTrueFertilityPct(preset);
 
+      // Build contiguous fertile arc
       const outcomes = new Array(WEDGES).fill(false);
       for (let i = 0; i < state.trueFertilityPct; i++) outcomes[i] = true;
       state.wedgeOutcomes = outcomes;
@@ -1398,7 +1458,7 @@
       setWheelRotationInstant(state.rotationDeg);
 
       els.monthNum.textContent = "0";
-      els.pointsNum.textContent = String(MAX_MONTHS);
+      els.pointsNum.textContent = String(state.pointsLeft);
       els.hubSub.textContent = "Month 1";
       els.spinBtn.textContent = "Spin Month 1";
       els.spinBtn.disabled = false;
@@ -1418,11 +1478,14 @@
       setFertilityRevealVisible(false);
       setGuessPct(10);
 
-      setMessage(`✅ Ready (Round ${state.round}/10). Spin Month 1, or lock in a guess immediately.`, "neutral");
+      const presetMeanPct = (MAX_FERT * (preset.a / (preset.a + preset.b)));
+      els.ageHint.innerHTML =
+        `This round uses <b>${preset.label}</b>. Average fertility ≈ <b>${presetMeanPct.toFixed(1)}%</b>. ` +
+        `Grace period: <b>${state.graceMonths}</b> months (points don’t drop before then).`;
+
+      setMessage(`✅ Ready (Round ${state.round}/10). Spin Month 1, or lock a guess immediately.`, "neutral");
       updateTopStats();
       updateRoundsTable();
-
-      els.ageHint.innerHTML = formatPresetHint();
     }
 
     function startNewGame(){
@@ -1449,11 +1512,6 @@
 
     /** ----- Spin logic ----- **/
     function computeRotationToLandOn(wedgeIndex){
-      // Conic gradients in CSS are measured from the top (12 o'clock) and increase clockwise.
-      // Our marker geometry matches that. The wheel transform is also clockwise for +deg.
-      // The center of wedge i is at: i*seg + seg/2.
-      // To land that center at the pointer (top, 0deg), wheel rotation modulo 360 must be:
-      //   rotation ≡ -center (mod 360) == 360 - center.
       const seg = 360 / WEDGES;
       const center = (wedgeIndex * seg + seg / 2);
       const desiredMod = (360 - center) % 360;
@@ -1478,7 +1536,6 @@
         if (!canSpinNow({auto})) { resolve(null); return; }
         state.spinning = true;
 
-        // For auto-spins, we keep controls disabled.
         if (!auto){
           els.spinBtn.disabled = true;
           els.lockBtn.disabled = true;
@@ -1488,13 +1545,13 @@
         const nextMonth = state.month + 1;
         const wedgeIndex = randInt(WEDGES);
 
-        const extraSpins = auto ? (2 + randInt(3)) : (4 + randInt(4)); // auto: 2..4, manual: 4..7
+        const extraSpins = auto ? (2 + randInt(3)) : (4 + randInt(4));
         const delta = computeRotationToLandOn(wedgeIndex);
         const finalRotation = state.rotationDeg + extraSpins * 360 + delta;
 
         const dur = auto
-          ? (0.85 + randFloat() * 0.55)  // 0.85..1.40s
-          : (4.2 + randFloat() * 1.2);   // 4.2..5.4s
+          ? (0.85 + randFloat() * 0.55)
+          : (4.2 + randFloat() * 1.2);
 
         els.wheelFace.style.transitionDuration = `${dur.toFixed(2)}s`;
         els.wheelFace.style.transform = `rotate(${finalRotation}deg)`;
@@ -1503,7 +1560,6 @@
           if (ev.propertyName !== "transform") return;
           els.wheelFace.removeEventListener("transitionend", onDone);
 
-          // If the session changed, ignore this spin's result.
           if (state.sessionId !== mySession){
             state.spinning = false;
             resolve(null);
@@ -1513,23 +1569,21 @@
           state.rotationDeg = finalRotation;
           state.month = nextMonth;
 
-          // Points only decrease BEFORE you lock. After locking, points are frozen ("Points locked").
+          // Points only decay before you lock; after lock, points are frozen.
           if (!state.guessLocked){
-            state.pointsLeft = Math.max(0, MAX_MONTHS - state.month);
+            state.pointsLeft = computePointsLeft(state.month);
           }
 
           const pregnant = !!state.wedgeOutcomes[wedgeIndex];
           state.spins.push({ month: nextMonth, wedgeIndex, pregnant, rotationDeg: finalRotation });
 
-          // UI updates
           if (state.revealed){
-            renderWheelRevealed();  // refresh marker layer to include the new month
+            renderWheelRevealed();
             revealMonthRow();
           } else {
             updateMonthRowAfterSpin(nextMonth);
           }
 
-          // Log: show points remaining until lock; after lock, show "—" (score already fixed).
           const pointsText = state.guessLocked ? "—" : String(state.pointsLeft);
           appendLogRow({ month: nextMonth, pregnant, pointsText });
 
@@ -1541,11 +1595,10 @@
           }
 
           if (!state.revealed){
-            // Only update instructional messages during manual play (pre-lock).
             if (pregnant){
-              setMessage(`Month <b>${nextMonth}</b>: <b>Pregnancy achieved</b>. You can lock your fertility guess now to score points.`, "good");
+              setMessage(`Month <b>${nextMonth}</b>: <b>Pregnancy achieved</b>. You can lock your guess now to score.`, "good");
             } else if (state.month >= MAX_MONTHS){
-              setMessage("You’ve reached <b>24 months</b>. You can still lock a guess, but no points remain.", "neutral");
+              setMessage("You’ve reached <b>24 months</b>. You can still lock a guess.", "neutral");
             } else {
               setMessage(`Month <b>${nextMonth}</b>: Not pregnant. Spin again for Month <b>${nextMonth + 1}</b>, or lock your guess.`, "neutral");
             }
@@ -1566,7 +1619,6 @@
             els.lockBtn.disabled = false;
             els.revealBtn.disabled = false;
           } else {
-            // During reveal/auto mode, keep hubSub updated.
             els.hubSub.textContent = state.conceived
               ? `Conceived (M${state.conceivedMonth})`
               : (state.month < MAX_MONTHS ? `Auto Month ${state.month + 1}` : "Done");
@@ -1646,11 +1698,18 @@
       buildRoundsTable();
       updateRoundsTable();
 
-      els.ageHint.innerHTML = formatPresetHint();
       els.ageSelect.addEventListener("change", () => {
-        els.ageHint.innerHTML = formatPresetHint();
+        const key = els.ageSelect.value;
+        const preset = presetForKey(key);
+        const Tnext = graceMonthsForKey(key);
+        const meanPct = (MAX_FERT * (preset.a / (preset.a + preset.b)));
+
+        els.ageHint.innerHTML =
+          `Next round will use <b>${preset.label}</b>. Average fertility ≈ <b>${meanPct.toFixed(1)}%</b>. ` +
+          `Grace period: <b>${Tnext}</b> months.`;
+
         setMessage(
-          `Age preset set to <b>${currentAgePreset().label}</b>. This will be used when the next round starts.`,
+          `Age preset set to <b>${preset.label}</b>. It will be used when the next round starts.`,
           "neutral"
         );
       });
@@ -1706,7 +1765,6 @@
       document.addEventListener("dragstart", (e) => e.preventDefault());
     }
 
-    // Make failures visible.
     try {
       init();
     } catch (err){
